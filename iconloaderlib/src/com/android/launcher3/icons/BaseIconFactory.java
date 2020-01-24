@@ -323,6 +323,10 @@ public class BaseIconFactory implements AutoCloseable {
             boolean[] outShape = new boolean[1];
             scale = getNormalizer().getScale(icon, outIconBounds, dr.getIconMask(), outShape);
             if (!outShape[0] && (icon.getChangingConfigurations() & CONFIG_HINT_NO_WRAP) == 0) {
+                // If there is an alpha on the icon, apply it to the wrapper instead.
+                dr.setAlpha(icon.getAlpha());
+                icon.setAlpha(0xFF);
+
                 FixedScaleDrawable fsd = ((FixedScaleDrawable) dr.getForeground());
                 fsd.setDrawable(icon);
                 fsd.setScale(scale);
