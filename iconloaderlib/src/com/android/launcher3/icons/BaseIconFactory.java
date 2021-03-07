@@ -33,7 +33,7 @@ public class BaseIconFactory implements AutoCloseable {
 
     private static final String TAG = "BaseIconFactory";
     private static final int DEFAULT_WRAPPER_BACKGROUND = Color.WHITE;
-    static final boolean ATLEAST_OREO = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
+    protected static final boolean ATLEAST_OREO = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
     static final boolean ATLEAST_P = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P;
 
     private static final float ICON_BADGE_SCALE = 0.444f;
@@ -53,8 +53,8 @@ public class BaseIconFactory implements AutoCloseable {
     private ShadowGenerator mShadowGenerator;
     private final boolean mShapeDetection;
 
-    private Drawable mWrapperIcon;
-    private int mWrapperBackgroundColor = DEFAULT_WRAPPER_BACKGROUND;
+    public Drawable mWrapperIcon;
+    protected int mWrapperBackgroundColor = DEFAULT_WRAPPER_BACKGROUND;
 
     protected BaseIconFactory(Context context, int fillResIconDpi, int iconBitmapSize,
             boolean shapeDetection) {
@@ -220,7 +220,7 @@ public class BaseIconFactory implements AutoCloseable {
         mDisableColorExtractor = true;
     }
 
-    private Drawable normalizeAndWrapToAdaptiveIcon(@NonNull Drawable icon,
+    protected Drawable normalizeAndWrapToAdaptiveIcon(@NonNull Drawable icon,
             boolean shrinkNonAdaptiveIcons, RectF outIconBounds, float[] outScale) {
         if (icon == null) {
             return null;
