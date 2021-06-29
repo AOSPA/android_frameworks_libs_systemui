@@ -82,10 +82,6 @@ public class IconProvider {
     private final ComponentName mCalendar;
     private final ComponentName mClock;
 
-    static final int ICON_TYPE_DEFAULT = 0;
-    static final int ICON_TYPE_CALENDAR = 1;
-    static final int ICON_TYPE_CLOCK = 2;
-
     public IconProvider(Context context) {
         this(context, false);
     }
@@ -147,23 +143,17 @@ public class IconProvider {
             Supplier<Drawable> fallback) {
         Drawable icon = null;
 
-        int iconType = ICON_TYPE_DEFAULT;
         if (mCalendar != null && mCalendar.getPackageName().equals(packageName)) {
             icon = loadCalendarDrawable(iconDpi);
-            iconType = ICON_TYPE_CALENDAR;
         } else if (mClock != null
                 && mClock.getPackageName().equals(packageName)
                 && Process.myUserHandle().equals(user)) {
             icon = loadClockDrawable(iconDpi);
-            iconType = ICON_TYPE_CLOCK;
         }
-        if (icon == null) {
-            icon = fallback.get();
-            iconType = ICON_TYPE_DEFAULT;
-        }
+        icon = icon == null ? fallback.get() : icon;
 
         ThemeData td = getThemedIconMap().get(packageName);
-        return td != null ? td.wrapDrawable(icon, iconType) : icon;
+        return td != null ? td.wrapDrawable(icon) : icon;
     }
 
     private Drawable loadActivityInfoIcon(ActivityInfo ai, int density) {
@@ -275,7 +265,7 @@ public class IconProvider {
     /**
      * @return Today's day of the month, zero-indexed.
      */
-    static int getDay() {
+    private int getDay() {
         return Calendar.getInstance().get(Calendar.DAY_OF_MONTH) - 1;
     }
 
