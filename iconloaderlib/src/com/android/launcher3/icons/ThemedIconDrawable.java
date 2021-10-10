@@ -153,7 +153,7 @@ public class ThemedIconDrawable extends FastBitmapDrawable {
 
         @Nullable
         public byte[] toByteArray() {
-            if (isNullOrLowRes()) {
+            if (isNullOrLowRes() || mThemeData.mResID == Integer.MIN_VALUE) {
                 return null;
             }
             String resName = mThemeData.mResources.getResourceName(mThemeData.mResID);
@@ -210,16 +210,33 @@ public class ThemedIconDrawable extends FastBitmapDrawable {
 
         final Resources mResources;
         final int mResID;
+        Drawable mDrawable;
 
         public ThemeData(Resources resources, int resID) {
             mResources = resources;
             mResID = resID;
         }
 
+        public ThemeData(Resources resources, Drawable drawable) {
+            mResources = resources;
+            mResID = Integer.MIN_VALUE;
+            if (drawable instanceof AdaptiveIconDrawable) {
+                 AdaptiveIconDrawable aid = (AdaptiveIconDrawable) drawable;
+                 mDrawable = aid.getForeground();
+            }
+        }
+
         Drawable loadMonochromeDrawable(int accentColor) {
-            Drawable d = mResources.getDrawable(mResID).mutate();
+            Drawable d;
+            float inset = 0.0f;
+            if (mDrawable != null) {
+                d = mDrawable.mutate();
+            } else {
+               inset = .2f;
+               d = mResources.getDrawable(mResID).mutate();
+            }
             d.setTint(accentColor);
-            d = new InsetDrawable(d, .2f);
+            d = new InsetDrawable(d, inset);
             return d;
         }
 
@@ -228,7 +245,12 @@ public class ThemedIconDrawable extends FastBitmapDrawable {
                 return original;
             }
             AdaptiveIconDrawable aid = (AdaptiveIconDrawable) original;
-            String resourceType = mResources.getResourceTypeName(mResID);
+
+            String resourceType = "";
+            if (mResID != Integer.MIN_VALUE) {
+                resourceType = mResources.getResourceTypeName(mResID);
+            }
+
             if (iconType == ICON_TYPE_CALENDAR && "array".equals(resourceType)) {
                 TypedArray ta = mResources.obtainTypedArray(mResID);
                 int id = ta.getResourceId(IconProvider.getDay(), ID_NULL);
@@ -238,7 +260,7 @@ public class ThemedIconDrawable extends FastBitmapDrawable {
             } else if (iconType == ICON_TYPE_CLOCK && "array".equals(resourceType)) {
                 ((ClockDrawableWrapper) original).mThemeData = this;
                 return original;
-            } else if ("drawable".equals(resourceType)) {
+            } else if ("drawable".equals(resourceType) || mDrawable != null) {
                 return new ThemedAdaptiveIcon(aid, this);
             } else {
                 return original;
@@ -273,6 +295,9 @@ public class ThemedIconDrawable extends FastBitmapDrawable {
             int[] colors = getColors(context);
             Drawable bg = new ColorDrawable(colors[0]);
             float inset = getExtraInsetFraction() / (1 + 2 * getExtraInsetFraction());
+            if (mThemeData.mDrawable != null) {
+                inset = 0.0f;
+            }
             Drawable fg = new InsetDrawable(mThemeData.loadMonochromeDrawable(colors[1]), inset);
             return new AdaptiveIconDrawable(bg, fg);
         }
