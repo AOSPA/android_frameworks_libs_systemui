@@ -32,7 +32,9 @@ import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Resources;
 import android.content.res.XmlResourceParser;
+import android.graphics.drawable.AdaptiveIconDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.VectorDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.PatternMatcher;
@@ -164,8 +166,11 @@ public class IconProvider {
 
         ThemeData td = getThemedIconMap().get(packageName);
 
-        if (td == null && mThemedIconMap != DISABLED_MAP) {
-            td = new ThemeData(mContext.getResources(), icon);
+        if (td == null && mThemedIconMap != DISABLED_MAP && icon instanceof AdaptiveIconDrawable) {
+            AdaptiveIconDrawable aid = (AdaptiveIconDrawable) icon;
+            if (aid.getForeground() instanceof VectorDrawable) {
+                td = new ThemeData(mContext.getResources(), icon);
+            }
         }
 
         return td != null ? td.wrapDrawable(icon, iconType) : icon;
