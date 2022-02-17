@@ -15,9 +15,14 @@
  */
 package com.android.launcher3.icons.cache;
 
+import static android.graphics.BitmapFactory.decodeByteArray;
+
 import static com.android.launcher3.icons.BaseIconFactory.getFullResDefaultActivityIcon;
 import static com.android.launcher3.icons.BitmapInfo.LOW_RES_ICON;
+import static com.android.launcher3.icons.GraphicsUtils.flattenBitmap;
 import static com.android.launcher3.icons.GraphicsUtils.setColorAlphaBound;
+
+import static java.util.Objects.requireNonNull;
 
 import android.content.ComponentName;
 import android.content.ContentValues;
@@ -32,6 +37,8 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteException;
 import android.graphics.Bitmap;
+import android.graphics.Bitmap.Config;
+import android.graphics.BitmapFactory;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Handler;
@@ -48,11 +55,14 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import com.android.launcher3.icons.BaseIconFactory;
+import com.android.launcher3.icons.BaseIconFactory.IconOptions;
 import com.android.launcher3.icons.BitmapInfo;
 import com.android.launcher3.util.ComponentKey;
 import com.android.launcher3.util.SQLiteCacheHelper;
 
+import java.nio.ByteBuffer;
 import java.util.AbstractMap;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -78,8 +88,6 @@ public abstract class BaseIconCache {
         public CharSequence contentDescription = "";
     }
 
-    private final HashMap<UserHandle, BitmapInfo> mDefaultIcons = new HashMap<>();
-
     protected final Context mContext;
     protected final PackageManager mPackageManager;
 
@@ -90,6 +98,8 @@ public abstract class BaseIconCache {
     protected IconDB mIconDb;
     protected LocaleList mLocaleList = LocaleList.getEmptyLocaleList();
     protected String mSystemState = "";
+
+    private BitmapInfo mDefaultIcon;
 
     private final String mDbFileName;
     private final Looper mBgLooper;
@@ -146,7 +156,7 @@ public abstract class BaseIconCache {
 
     private synchronized void updateIconParamsBg(int iconDpi, int iconPixelSize) {
         mIconDpi = iconDpi;
-        mDefaultIcons.clear();
+        mDefaultIcon = null;
         mIconDb.clear();
         mIconDb.close();
         mIconDb = new IconDB(mContext, mDbFileName, iconPixelSize);
@@ -175,12 +185,6 @@ public abstract class BaseIconCache {
                     info.getIconResource());
         } catch (PackageManager.NameNotFoundException e) { }
         return getFullResDefaultActivityIcon(mIconDpi);
-    }
-
-    private BitmapInfo makeDefaultIcon(UserHandle user) {
-        try (BaseIconFactory li = getIconFactory()) {
-            return li.makeDefaultIcon(user);
-        }
     }
 
     /**
@@ -265,7 +269,13 @@ public abstract class BaseIconCache {
         // (e.g. fallback icon, default icon). So we drop here since there's no point in caching
         // an empty entry.
         if (entry.bitmap.isNullOrLowRes()) return;
-        entry.title = cachingLogic.getLabel(object);
+
+        CharSequence entryTitle = cachingLogic.getLabel(object);
+        if (entryTitle == null) {
+            Log.d(TAG, "No label returned from caching logic instance: " + cachingLogic);
+        }
+        entry.title = entryTitle;
+
         entry.contentDescription = mPackageManager.getUserBadgedLabel(entry.title, user);
         if (cachingLogic.addToMemCache()) mCache.put(key, entry);
 
@@ -289,10 +299,12 @@ public abstract class BaseIconCache {
     }
 
     public synchronized BitmapInfo getDefaultIcon(UserHandle user) {
-        if (!mDefaultIcons.containsKey(user)) {
-            mDefaultIcons.put(user, makeDefaultIcon(user));
+        if (mDefaultIcon == null) {
+            try (BaseIconFactory li = getIconFactory()) {
+                mDefaultIcon = li.makeDefaultIcon();
+            }
         }
-        return mDefaultIcons.get(user);
+        return mDefaultIcon.clone().withUser(user);
     }
 
     public boolean isDefaultIcon(BitmapInfo icon, UserHandle user) {
@@ -402,7 +414,7 @@ public abstract class BaseIconCache {
         }
         if (icon != null) {
             BaseIconFactory li = getIconFactory();
-            entry.bitmap = li.createShapedIconBitmap(icon, user);
+            entry.bitmap = li.createShapedIconBitmap(icon, new IconOptions().setUser(user));
             li.close();
         }
         if (!TextUtils.isEmpty(title) && entry.bitmap.icon != null) {
@@ -444,8 +456,8 @@ public abstract class BaseIconCache {
                     // Load the full res icon for the application, but if useLowResIcon is set, then
                     // only keep the low resolution icon instead of the larger full-sized icon
                     BitmapInfo iconInfo = li.createBadgedIconBitmap(
-                            appInfo.loadIcon(mPackageManager), user, appInfo.targetSdkVersion,
-                            isInstantApp(appInfo));
+                            appInfo.loadIcon(mPackageManager),
+                            new IconOptions().setUser(user).setInstantApp(isInstantApp(appInfo)));
                     li.close();
 
                     entry.title = appInfo.loadLabel(mPackageManager);
@@ -501,8 +513,9 @@ public abstract class BaseIconCache {
     private boolean updateTitleAndIcon(
             ComponentKey cacheKey, CacheEntry entry, Cursor c, boolean lowRes) {
         // Set the alpha to be 255, so that we never have a wrong color
-        entry.bitmap = BitmapInfo.of(LOW_RES_ICON, setColorAlphaBound(c.getInt(0), 255));
-        entry.title = c.getString(1);
+        entry.bitmap = BitmapInfo.of(LOW_RES_ICON,
+                setColorAlphaBound(c.getInt(IconDB.INDEX_COLOR), 255));
+        entry.title = c.getString(IconDB.INDEX_TITLE);
         if (entry.title == null) {
             entry.title = "";
             entry.contentDescription = "";
@@ -512,13 +525,34 @@ public abstract class BaseIconCache {
         }
 
         if (!lowRes) {
+            byte[] data = c.getBlob(IconDB.INDEX_ICON);
+            if (data == null) {
+                return false;
+            }
             try {
-                entry.bitmap = BitmapInfo.fromByteArray(
-                        c.getBlob(2), entry.bitmap.color, cacheKey.user, this, mContext);
+                BitmapFactory.Options decodeOptions = new BitmapFactory.Options();
+                decodeOptions.inPreferredConfig = Config.HARDWARE;
+                entry.bitmap = BitmapInfo.of(
+                        requireNonNull(decodeByteArray(data, 0, data.length, decodeOptions)),
+                        entry.bitmap.color);
             } catch (Exception e) {
                 return false;
             }
+
+            // Decode mono bitmap
+            data = c.getBlob(IconDB.INDEX_MONO_ICON);
+            Bitmap icon = entry.bitmap.icon;
+            if (data != null && data.length == icon.getHeight() * icon.getWidth()) {
+                Bitmap monoBitmap = Bitmap.createBitmap(
+                        icon.getWidth(), icon.getHeight(), Config.ALPHA_8);
+                monoBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(data));
+                try (BaseIconFactory factory = getIconFactory()) {
+                    entry.bitmap.setMonoIcon(monoBitmap, factory);
+                }
+            }
         }
+        entry.bitmap.flags = c.getInt(IconDB.INDEX_FLAGS);
+        entry.bitmap.withUser(cacheKey.user);
         return entry.bitmap != null;
     }
 
@@ -534,7 +568,7 @@ public abstract class BaseIconCache {
      * Cache class to store the actual entries on disk
      */
     public static final class IconDB extends SQLiteCacheHelper {
-        private static final int RELEASE_VERSION = 31;
+        private static final int RELEASE_VERSION = 34;
 
         public static final String TABLE_NAME = "icons";
         public static final String COLUMN_ROWID = "rowid";
@@ -544,17 +578,29 @@ public abstract class BaseIconCache {
         public static final String COLUMN_VERSION = "version";
         public static final String COLUMN_ICON = "icon";
         public static final String COLUMN_ICON_COLOR = "icon_color";
+        public static final String COLUMN_MONO_ICON = "mono_icon";
+        public static final String COLUMN_FLAGS = "flags";
         public static final String COLUMN_LABEL = "label";
         public static final String COLUMN_SYSTEM_STATE = "system_state";
         public static final String COLUMN_KEYWORDS = "keywords";
 
-        public static final String[] COLUMNS_HIGH_RES = new String[] {
-                IconDB.COLUMN_ICON_COLOR,
-                IconDB.COLUMN_LABEL,
-                IconDB.COLUMN_ICON,
-                COLUMN_COMPONENT};
         public static final String[] COLUMNS_LOW_RES = new String[] {
-                IconDB.COLUMN_ICON_COLOR, IconDB.COLUMN_LABEL, COLUMN_COMPONENT};
+                COLUMN_COMPONENT,
+                COLUMN_LABEL,
+                COLUMN_ICON_COLOR,
+                COLUMN_FLAGS};
+        public static final String[] COLUMNS_HIGH_RES = Arrays.copyOf(COLUMNS_LOW_RES,
+                COLUMNS_LOW_RES.length + 2, String[].class);
+        static {
+            COLUMNS_HIGH_RES[COLUMNS_LOW_RES.length] = COLUMN_ICON;
+            COLUMNS_HIGH_RES[COLUMNS_LOW_RES.length + 1] = COLUMN_MONO_ICON;
+        }
+        private static final int INDEX_TITLE = Arrays.asList(COLUMNS_LOW_RES).indexOf(COLUMN_LABEL);
+        private static final int INDEX_COLOR = Arrays.asList(COLUMNS_LOW_RES)
+                .indexOf(COLUMN_ICON_COLOR);
+        private static final int INDEX_FLAGS = Arrays.asList(COLUMNS_LOW_RES).indexOf(COLUMN_FLAGS);
+        private static final int INDEX_ICON = COLUMNS_LOW_RES.length;
+        private static final int INDEX_MONO_ICON = INDEX_ICON + 1;
 
         public IconDB(Context context, String dbFileName, int iconPixelSize) {
             super(context, dbFileName, (RELEASE_VERSION << 16) + iconPixelSize, TABLE_NAME);
@@ -568,7 +614,9 @@ public abstract class BaseIconCache {
                     + COLUMN_LAST_UPDATED + " INTEGER NOT NULL DEFAULT 0, "
                     + COLUMN_VERSION + " INTEGER NOT NULL DEFAULT 0, "
                     + COLUMN_ICON + " BLOB, "
+                    + COLUMN_MONO_ICON + " BLOB, "
                     + COLUMN_ICON_COLOR + " INTEGER NOT NULL DEFAULT 0, "
+                    + COLUMN_FLAGS + " INTEGER NOT NULL DEFAULT 0, "
                     + COLUMN_LABEL + " TEXT, "
                     + COLUMN_SYSTEM_STATE + " TEXT, "
                     + COLUMN_KEYWORDS + " TEXT, "
@@ -580,8 +628,26 @@ public abstract class BaseIconCache {
     private ContentValues newContentValues(BitmapInfo bitmapInfo, String label,
             String packageName, @Nullable String keywords) {
         ContentValues values = new ContentValues();
-        values.put(IconDB.COLUMN_ICON, bitmapInfo.toByteArray());
+        if (bitmapInfo.canPersist()) {
+            values.put(IconDB.COLUMN_ICON, flattenBitmap(bitmapInfo.icon));
+
+            // Persist mono bitmap as alpha channel
+            Bitmap mono = bitmapInfo.getMono();
+            if (mono != null && mono.getHeight() == bitmapInfo.icon.getHeight()
+                    && mono.getWidth() == bitmapInfo.icon.getWidth()
+                    && mono.getConfig() == Config.ALPHA_8) {
+                byte[] pixels = new byte[mono.getWidth() * mono.getHeight()];
+                mono.copyPixelsToBuffer(ByteBuffer.wrap(pixels));
+                values.put(IconDB.COLUMN_MONO_ICON, pixels);
+            } else {
+                values.put(IconDB.COLUMN_MONO_ICON, (byte[]) null);
+            }
+        } else {
+            values.put(IconDB.COLUMN_ICON, (byte[]) null);
+            values.put(IconDB.COLUMN_MONO_ICON, (byte[]) null);
+        }
         values.put(IconDB.COLUMN_ICON_COLOR, bitmapInfo.color);
+        values.put(IconDB.COLUMN_FLAGS, bitmapInfo.flags);
 
         values.put(IconDB.COLUMN_LABEL, label);
         values.put(IconDB.COLUMN_SYSTEM_STATE, getIconSystemState(packageName));
