@@ -20,6 +20,8 @@ import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Bitmap.Config;
 import android.graphics.Canvas;
+import android.graphics.drawable.Drawable;
+import android.os.UserHandle;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
@@ -29,11 +31,9 @@ import com.android.launcher3.util.FlagOp;
 
 public class BitmapInfo {
 
-    static final int FLAG_WORK = 1 << 0;
     static final int FLAG_INSTANT = 1 << 1;
     static final int FLAG_CLONE = 1 << 2;
     @IntDef(flag = true, value = {
-            FLAG_WORK,
             FLAG_INSTANT,
             FLAG_CLONE
     })
@@ -62,6 +62,12 @@ public class BitmapInfo {
     public @BitmapInfoFlags int flags;
     private BitmapInfo badgeInfo;
 
+    @Nullable
+    private UserHandle mUserHandle;
+
+    @Nullable
+    private Drawable mUserBadge;
+
     public BitmapInfo(Bitmap icon, int color) {
         this.icon = icon;
         this.color = color;
@@ -85,11 +91,19 @@ public class BitmapInfo {
         return result;
     }
 
+    public BitmapInfo withUser(@Nullable UserHandle user, @NonNull BaseIconFactory iconFactory) {
+        BitmapInfo result = clone();
+        result.setUser(user, iconFactory);
+        return result;
+    }
+
     protected BitmapInfo copyInternalsTo(BitmapInfo target) {
         target.mMono = mMono;
         target.mWhiteShadowLayer = mWhiteShadowLayer;
         target.flags = flags;
         target.badgeInfo = badgeInfo;
+        target.mUserHandle = mUserHandle;
+        target.mUserBadge = mUserBadge;
         return target;
     }
 
@@ -101,6 +115,20 @@ public class BitmapInfo {
     public void setMonoIcon(Bitmap mono, BaseIconFactory iconFactory) {
         mMono = mono;
         mWhiteShadowLayer = iconFactory.getWhiteShadowLayer();
+    }
+
+    public void setUser(@Nullable UserHandle user, @NonNull BaseIconFactory iconFactory) {
+        mUserHandle = user;
+        if (user != null) {
+            mUserBadge = iconFactory.getBadgeForUser(mUserHandle);
+            /* if (isNullOrLowRes()) {
+                mUserBadge = iconFactory.getBadgeForUser(mUserHandle);
+            } else {
+                mUserBadge = iconFactory.getBadgeForUser(mUserHandle, icon.getWidth());
+            } */
+        } else {
+            mUserBadge = null;
+        }
     }
 
     /**
@@ -124,6 +152,8 @@ public class BitmapInfo {
     public Bitmap getMono() {
         return mMono;
     }
+
+    public UserHandle getUser() { return mUserHandle; }
 
     /**
      * Creates a drawable for the provided BitmapInfo
@@ -158,10 +188,11 @@ public class BitmapInfo {
                 drawable.setBadge(context.getDrawable(drawable.isThemed()
                         ? R.drawable.ic_instant_app_badge_themed
                         : R.drawable.ic_instant_app_badge));
-            } else if ((flags & FLAG_WORK) != 0) {
-                drawable.setBadge(context.getDrawable(drawable.isThemed()
-                        ? R.drawable.ic_work_app_badge_themed
-                        : R.drawable.ic_work_app_badge));
+            } else if (mUserBadge != null) {
+                // We use a copy of the badge, or changes will affect everywhere it is used;
+                // e.g., shortcuts/widget user badges are very small, and these could affect
+                // regular launcher icons, and the other way around.
+                drawable.setBadge(mUserBadge.getConstantState().newDrawable().mutate());
             } else if ((flags & FLAG_CLONE) != 0) {
                 drawable.setBadge(context.getDrawable(drawable.isThemed()
                         ? R.drawable.ic_clone_app_badge_themed
