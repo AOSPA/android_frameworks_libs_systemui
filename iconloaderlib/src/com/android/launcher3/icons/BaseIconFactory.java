@@ -7,7 +7,6 @@ import static android.graphics.drawable.AdaptiveIconDrawable.getExtraInsetFracti
 
 import static com.android.launcher3.icons.BitmapInfo.FLAG_CLONE;
 import static com.android.launcher3.icons.BitmapInfo.FLAG_INSTANT;
-import static com.android.launcher3.icons.BitmapInfo.FLAG_WORK;
 import static com.android.launcher3.icons.ShadowGenerator.BLUR_FACTOR;
 
 import static java.lang.annotation.RetentionPolicy.SOURCE;
@@ -31,7 +30,10 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.InsetDrawable;
 import android.os.Build;
+import android.os.Process;
 import android.os.UserHandle;
+import android.util.ArrayMap;
+import android.util.Pair;
 import android.util.SparseBooleanArray;
 
 import androidx.annotation.ColorInt;
@@ -103,6 +105,9 @@ public class BaseIconFactory implements AutoCloseable {
 
     private Drawable mWrapperIcon;
     private int mWrapperBackgroundColor = DEFAULT_WRAPPER_BACKGROUND;
+
+    // User badges cached by size, e.g. workspace badge (large) vs widget badge (small)
+    private final ArrayMap<Pair<UserHandle, Integer>, Bitmap> mUserBadges = new ArrayMap<>();
 
     private static int PLACEHOLDER_BACKGROUND_COLOR = Color.rgb(245, 245, 245);
 
@@ -230,6 +235,9 @@ public class BaseIconFactory implements AutoCloseable {
                 info.setMonoIcon(createIconBitmap(mono, scale[0], MODE_ALPHA), this);
             }
         }
+        if (options != null && options.mUserHandle != null) {
+            info.setUser(options.mUserHandle, this);
+        }
         info = info.withFlags(getBitmapFlagOp(options));
         return info;
     }
@@ -271,8 +279,6 @@ public class BaseIconFactory implements AutoCloseable {
                 }
                 // Set the clone profile badge flag in case it is present.
                 op = op.setFlag(FLAG_CLONE, isBadged && options.mIsCloneProfile);
-                // Set the Work profile badge for all other cases.
-                op = op.setFlag(FLAG_WORK, isBadged && !options.mIsCloneProfile);
             }
         }
         return op;
@@ -459,6 +465,65 @@ public class BaseIconFactory implements AutoCloseable {
     public static Drawable getFullResDefaultActivityIcon(final int iconDpi) {
         return Objects.requireNonNull(Resources.getSystem().getDrawableForDensity(
                 android.R.drawable.sym_def_app_icon, iconDpi));
+    }
+
+    public Drawable getBadgeForUser(UserHandle user) {
+        return getBadgeForUser(user, mIconBitmapSize);
+    }
+
+    /**
+     * Returns a drawable that can be used as a badge for the user or null.
+     */
+    // @UiThread
+    public Drawable getBadgeForUser(UserHandle user, int iconSize) {
+        final int badgeSize = getBadgeSizeForIconSize(iconSize);
+        Bitmap badgeBitmap = getUserBadge(user, badgeSize);
+        FastBitmapDrawable d = new FastBitmapDrawable(badgeBitmap);
+        d.setFilterBitmap(true);
+        d.setBounds(0 /* left */, 0 /* top */, badgeBitmap.getWidth(), badgeBitmap.getHeight());
+        return d;
+    }
+
+    private Bitmap getUserBadge(UserHandle user, int badgeSize) {
+        assert(badgeSize < mIconBitmapSize);
+        Pair<UserHandle, Integer> userBadgeOfSize = new Pair<>(user, badgeSize);
+        synchronized (mUserBadges) {
+            Bitmap badgeBitmap = mUserBadges.get(userBadgeOfSize);
+            if (badgeBitmap != null) {
+                return badgeBitmap;
+            }
+
+            final Resources res = mContext.getResources();
+            Bitmap badgedBitmap = Bitmap.createBitmap(
+                    mIconBitmapSize, mIconBitmapSize, Bitmap.Config.ARGB_8888);
+
+            // PackageManager's getUserBadgedDrawableForDensity results in a giant work profile
+            // icon that extends outside of the badge icon's circle, seemingly no matter what
+            // arguments are provided. getUserBadgeForDensity is not even exposed (hidden).
+            // So, unfortunately, we draw into a full icon size Bitmap and then crop out the
+            // badge from the corner.
+            Drawable drawable = mContext.getPackageManager().getUserBadgedIcon(
+                    new BitmapDrawable(res, badgedBitmap), user);
+            /* Drawable drawable = mContext.getPackageManager().getUserBadgedDrawableForDensity(
+                    new BitmapDrawable(res, badgeBitmap), user,
+                    new Rect(0, 0, badgeSize, badgeSize),
+                    0); */
+            if (drawable instanceof BitmapDrawable) {
+                badgedBitmap = ((BitmapDrawable) drawable).getBitmap();
+            } else {
+                badgedBitmap.eraseColor(Color.TRANSPARENT);
+                Canvas c = new Canvas(badgedBitmap);
+                drawable.setBounds(0, 0, badgeSize, badgeSize);
+                drawable.draw(c);
+                c.setBitmap(null);
+            }
+            final int cropOffset = Math.max(mIconBitmapSize - badgeSize, 0);
+            badgeBitmap = Bitmap.createBitmap(badgedBitmap,
+                    cropOffset /* x */, cropOffset /* y */,
+                    badgeSize /* width */, badgeSize /* height */);
+            mUserBadges.put(userBadgeOfSize, badgeBitmap);
+            return badgeBitmap;
+        }
     }
 
     /**
