@@ -74,9 +74,6 @@ public class LayoutType {
     public static final String TEXT_HEADER = "header";
 
     // horizontal bar to be inserted between fallback search results and low confidence section
-    public static final String DIVIDER = "divider";
-
-    // horizontal bar to be inserted between fallback search results and low confidence section
     public static final String EMPTY_DIVIDER = "empty_divider";
 
     // layout representing quick calculations
@@ -92,4 +89,7 @@ public class LayoutType {
     // Layout for a text header
     // Available for SearchUiManager proxy service to use above version code 3
     public static final String TEXT_HEADER_ROW = "text_header_row";
+
+    // Layout for a quick settings tile
+    public static final String QS_TILE = "qs_tile";
 }
