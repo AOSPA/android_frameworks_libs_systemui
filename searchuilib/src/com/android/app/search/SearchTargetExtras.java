@@ -50,6 +50,8 @@ public class SearchTargetExtras {
     // Used if subtitle view should be overridden to string that is not natively defined by the
     // search target.
     public static final String BUNDLE_EXTRA_SUBTITLE_OVERRIDE = "subtitle_override";
+    // Used to override icon with the package name defined in SearchTarget.
+    public static final String BUNDLE_EXTRA_ICON_OVERRIDE = "icon_override";
 
     // Used for logging. Returns whether spelling correction was applied.
     public static final String BUNDLE_EXTRA_IS_QUERY_CORRECTED = "is_query_corrected";
@@ -196,6 +198,9 @@ public class SearchTargetExtras {
     public static final String BUNDLE_EXTRA_SUPPORT_QUERY_BUILDER = "support_query_builder";
     public static final String BUNDLE_EXTRA_SUGGEST_RAW_TEXT = "suggest_raw_text";
     public static final String BUNDLE_EXTRA_SUGGEST_TRUNCATE_START = "suggest_truncate_start";
+
+    /** Score threshold boosting the target. */
+    public static final String BUNDLE_EXTRA_SCORE_THRESHOLD = "score_threshold";
 
     /** Web data related helper methods */
     public static boolean isEntity(@Nullable SearchTarget target) {
